@@ -1,6 +1,5 @@
 node_modules
 .env
 .env-prod
-dev.db
 dev.db-journal
 /src/generated/prisma
