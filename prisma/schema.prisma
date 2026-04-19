@@ -1,0 +1,93 @@
+generator client {
+  provider      = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("supervisor") // "supervisor" | "manager"
+  createdAt DateTime @default(now())
+
+  ownedProjects    Project[]        @relation("ProjectOwner")
+  managedProjects  ProjectManager[]
+  reports          Report[]
+  refreshTokens    RefreshToken[]
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String   @default("")
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner    User             @relation("ProjectOwner", fields: [ownerId], references: [id])
+  managers ProjectManager[]
+  reports  Report[]
+}
+
+model ProjectManager {
+  projectId  String
+  managerId  String
+  assignedAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  manager User    @relation(fields: [managerId], references: [id])
+
+  @@id([projectId, managerId])
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  projectId   String
+  authorId    String
+  notes       String
+  status      String   @default("pending") // "pending" | "generating" | "done" | "failed"
+  reportData  String?  // JSON string of structured AI report
+  pdfPublicId String?  // Cloudinary public_id for signed URL re-issue
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project      @relation(fields: [projectId], references: [id])
+  author  User         @relation(fields: [authorId], references: [id])
+  images  ReportImage[]
+  job     ReportJob?
+}
+
+model ReportImage {
+  id           String @id @default(uuid())
+  reportId     String
+  cloudinaryId String
+  url          String
+
+  report Report @relation(fields: [reportId], references: [id])
+}
+
+model ReportJob {
+  id          String    @id @default(uuid())
+  reportId    String    @unique
+  status      String    @default("queued") // "queued" | "processing" | "done" | "failed"
+  error       String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  report Report @relation(fields: [reportId], references: [id])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
