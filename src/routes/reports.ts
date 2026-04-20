@@ -4,6 +4,8 @@ import prisma from "../lib/prisma";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { getProjectWithAccess } from "./projects";
 import { generateAIReport } from "../services/ai";
+import { upload } from "../middleware/upload";
+import { uploadStream, deleteAsset } from "../services/cloudinary";
 
 const router = Router({ mergeParams: true });
 
@@ -151,5 +153,83 @@ async function generateReport(reportId: string, notes: string, projectName: stri
     throw err;
   }
 }
+
+// POST /projects/:projectId/reports/:reportId/media — upload image or video
+router.post(
+  "/:reportId/media",
+  upload.single("file"),
+  async (req: AuthRequest, res: Response) => {
+    const { projectId, reportId } = req.params as { projectId: string; reportId: string };
+
+    const report = await prisma.report.findUnique({ where: { id: reportId } });
+    if (!report || report.projectId !== projectId) {
+      res.status(404).json({ code: "NOT_FOUND", message: "Report not found", hint: "" });
+      return;
+    }
+    if (report.authorId !== req.user!.sub) {
+      res.status(403).json({ code: "FORBIDDEN", message: "Only the author can upload media", hint: "" });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ code: "VALIDATION_ERROR", message: "No file provided", hint: "Send file as multipart/form-data field named 'file'" });
+      return;
+    }
+
+    const isVideo = req.file.mimetype.startsWith("video/");
+    const result = await uploadStream(req.file.buffer, isVideo ? "video" : "image");
+
+    const media = await prisma.reportImage.create({
+      data: { reportId, cloudinaryId: result.publicId, url: result.url },
+    });
+
+    res.status(201).json(media);
+  },
+);
+
+// DELETE /projects/:projectId/reports/:reportId/media/:mediaId
+router.delete("/:reportId/media/:mediaId", async (req: AuthRequest, res: Response) => {
+  const { projectId, reportId, mediaId } = req.params as {
+    projectId: string;
+    reportId: string;
+    mediaId: string;
+  };
+
+  const report = await prisma.report.findUnique({ where: { id: reportId } });
+  if (!report || report.projectId !== projectId) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Report not found", hint: "" });
+    return;
+  }
+  if (report.authorId !== req.user!.sub) {
+    res.status(403).json({ code: "FORBIDDEN", message: "Only the author can delete media", hint: "" });
+    return;
+  }
+
+  const media = await prisma.reportImage.findUnique({ where: { id: mediaId } });
+  if (!media || media.reportId !== reportId) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Media not found", hint: "" });
+    return;
+  }
+
+  // Determine resource type from cloudinaryId prefix convention (images have no /video/ segment)
+  const resourceType = media.cloudinaryId.includes("/video/") ? "video" : "image";
+  await deleteAsset(media.cloudinaryId, resourceType);
+  await prisma.reportImage.delete({ where: { id: mediaId } });
+
+  res.status(204).send();
+});
+
+// GET /projects/:projectId/reports/:reportId/media
+router.get("/:reportId/media", async (req: AuthRequest, res: Response) => {
+  const { projectId, reportId } = req.params as { projectId: string; reportId: string };
+
+  const report = await prisma.report.findUnique({ where: { id: reportId } });
+  if (!report || report.projectId !== projectId) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Report not found", hint: "" });
+    return;
+  }
+
+  const media = await prisma.reportImage.findMany({ where: { reportId } });
+  res.json(media);
+});
 
 export default router;
