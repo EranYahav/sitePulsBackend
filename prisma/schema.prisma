@@ -50,6 +50,7 @@ model Report {
   projectId   String
   authorId    String
   notes       String
+  title       String?  // AI-extracted short title (max 5 words)
   status      String   @default("pending") // "pending" | "generating" | "done" | "failed"
   reportData  String?  // JSON string of structured AI report
   pdfPublicId String?  // Cloudinary public_id for signed URL re-issue
