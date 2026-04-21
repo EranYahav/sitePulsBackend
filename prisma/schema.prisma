@@ -32,6 +32,7 @@ model Project {
   owner    User             @relation("ProjectOwner", fields: [ownerId], references: [id])
   managers ProjectManager[]
   reports  Report[]
+  defects  Defect[]
 }
 
 model ProjectManager {
@@ -81,6 +82,26 @@ model ReportJob {
   completedAt DateTime?
 
   report Report @relation(fields: [reportId], references: [id])
+}
+
+model Defect {
+  id           String    @id @default(uuid())
+  projectId    String
+  phaseId      String?
+  title        String
+  photoUrl     String
+  cloudinaryId String
+  urgency      String    // "high" | "medium" | "low"
+  domain       String    // "electrical" | "plumbing" | "drywall" | "tiling" | "paint" | "structure" | "other"
+  description  String?
+  tradesperson String?
+  reminderDate DateTime?
+  status         String    @default("open") // "open" | "assigned" | "resolved"
+  trackingNotes  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model RefreshToken {

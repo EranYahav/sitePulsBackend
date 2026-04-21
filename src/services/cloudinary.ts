@@ -6,8 +6,6 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const FOLDER = "onePulse/report";
-
 export type UploadResult = {
   publicId: string;
   url: string;
@@ -17,10 +15,11 @@ export type UploadResult = {
 export function uploadStream(
   buffer: Buffer,
   resourceType: "image" | "video" | "raw" | "auto",
+  folder = "onePulse/report",
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: FOLDER, resource_type: resourceType },
+      { folder, resource_type: resourceType },
       (error, result) => {
         if (error || !result) return reject(error ?? new Error("Upload failed"));
         resolve({

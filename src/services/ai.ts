@@ -94,6 +94,109 @@ Respond with a JSON object matching this exact structure:
 IMPORTANT REMINDER: All text values in the JSON must be in ${langName}. Return only the JSON object. No other text.`;
 }
 
+// ── Defect analysis ───────────────────────────────────────────────────────────
+
+const VALID_URGENCIES_AI = ["high", "medium", "low"] as const;
+const VALID_DOMAINS_AI = ["electrical", "plumbing", "drywall", "tiling", "paint", "structure", "other"] as const;
+
+const DefectOkSchema = z.object({
+  ok: z.literal(true),
+  title: z.string(),
+  urgency: z.enum(VALID_URGENCIES_AI),
+  domain: z.enum(VALID_DOMAINS_AI),
+  description: z.string().optional(),
+  tradesperson: z.string().optional(),
+  reminderDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const DefectErrorSchema = z.object({
+  ok: z.literal(false),
+  message: z.string(),
+});
+
+const DefectAnalysisSchema = z.discriminatedUnion("ok", [DefectOkSchema, DefectErrorSchema]);
+export type DefectAnalysisResult = z.infer<typeof DefectAnalysisSchema>;
+
+const DOMAIN_LABELS: Record<string, Record<string, string>> = {
+  he: { electrical: "חשמל", plumbing: "אינסטלציה", drywall: "גבס", tiling: "ריצוף", paint: "צבע", structure: "שלד", other: "אחר" },
+  en: { electrical: "Electrical", plumbing: "Plumbing", drywall: "Drywall", tiling: "Tiling", paint: "Paint", structure: "Structure", other: "Other" },
+  ru: { electrical: "Электрика", plumbing: "Сантехника", drywall: "Гипсокартон", tiling: "Плитка", paint: "Покраска", structure: "Конструкция", other: "Другое" },
+  ar: { electrical: "كهرباء", plumbing: "سباكة", drywall: "جبس", tiling: "بلاط", paint: "دهان", structure: "هيكل", other: "أخرى" },
+};
+
+const URGENCY_LABELS: Record<string, Record<string, string>> = {
+  he: { high: "דחוף", medium: "בינוני", low: "נמוך" },
+  en: { high: "High", medium: "Medium", low: "Low" },
+  ru: { high: "Высокая", medium: "Средняя", low: "Низкая" },
+  ar: { high: "عاجل", medium: "متوسط", low: "منخفض" },
+};
+
+function buildDefectSystemPrompt(lang: string): string {
+  const langName = LANG_NAMES[lang] ?? "Hebrew";
+  const today = new Date().toISOString().slice(0, 10);
+  const dl = DOMAIN_LABELS[lang] ?? DOMAIN_LABELS.he;
+  const ul = URGENCY_LABELS[lang] ?? URGENCY_LABELS.he;
+
+  return `You are a construction site defect analyst.
+Extract structured defect information from a site supervisor's verbal or written description.
+
+Today's date: ${today}
+
+Required fields — if you cannot determine them, return ok=false with a helpful message in ${langName}:
+- title: short defect title (max 6 words, in ${langName})
+- urgency: one of "high" / "medium" / "low"
+  Labels: high="${ul.high}", medium="${ul.medium}", low="${ul.low}"
+- domain: one of "electrical" / "plumbing" / "drywall" / "tiling" / "paint" / "structure" / "other"
+  Labels: electrical="${dl.electrical}", plumbing="${dl.plumbing}", drywall="${dl.drywall}", tiling="${dl.tiling}", paint="${dl.paint}", structure="${dl.structure}", other="${dl.other}"
+
+Optional fields — extract if mentioned:
+- description: detailed defect description in ${langName}
+- tradesperson: name/type of contractor responsible
+- reminderDate: follow-up date as YYYY-MM-DD (parse relative dates like "in two weeks" using today's date)
+
+If any REQUIRED field is unclear or missing, respond with:
+{"ok": false, "message": "<explanation in ${langName} of what is missing and how to provide it>"}
+
+If all required fields are present, respond with:
+{"ok": true, "title": "...", "urgency": "...", "domain": "...", "description": "...", "tradesperson": "...", "reminderDate": "YYYY-MM-DD"}
+Omit optional fields that were not mentioned.
+
+Respond with valid JSON only. No markdown, no explanation.`;
+}
+
+export async function analyzeDefect(text: string, lang = "he"): Promise<DefectAnalysisResult> {
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 512,
+    system: buildDefectSystemPrompt(lang),
+    messages: [{ role: "user", content: text }],
+  });
+
+  const raw = message.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("")
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, message: `AI returned unexpected output. Please try again.` };
+  }
+
+  const result = DefectAnalysisSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, message: `AI output format error. Please try again.` };
+  }
+
+  return result.data;
+}
+
+// ── Report generation ──────────────────────────────────────────────────────────
+
 export async function generateAIReport(
   notes: string,
   projectName: string,
