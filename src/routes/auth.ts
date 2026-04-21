@@ -87,8 +87,60 @@ router.post("/refresh", async (req: Request, res: Response) => {
 });
 
 router.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
-  const user = await prisma.user.findUnique({ where: { id: req.user!.sub }, select: { id: true, email: true, name: true, role: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: req.user!.sub },
+    select: { id: true, email: true, name: true, role: true, companyName: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+  });
   res.json(user);
+});
+
+const profileSchema = z.object({
+  name: z.string().min(1),
+  companyName: z.string().optional(),
+  mobileNumber: z.string().optional(),
+  phoneNumber: z.string().optional(),
+  whatsappNumber: z.string().optional(),
+});
+
+router.put("/profile", requireAuth, async (req: AuthRequest, res: Response) => {
+  const parsed = profileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ code: "VALIDATION_ERROR", message: "Invalid input", hint: parsed.error.flatten() });
+    return;
+  }
+  const user = await prisma.user.update({
+    where: { id: req.user!.sub },
+    data: {
+      name: parsed.data.name,
+      companyName: parsed.data.companyName || null,
+      mobileNumber: parsed.data.mobileNumber || null,
+      phoneNumber: parsed.data.phoneNumber || null,
+      whatsappNumber: parsed.data.whatsappNumber || null,
+    },
+    select: { id: true, email: true, name: true, role: true, companyName: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+  });
+  res.json(user);
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string(),
+  newPassword: z.string().min(8),
+});
+
+router.put("/change-password", requireAuth, async (req: AuthRequest, res: Response) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ code: "VALIDATION_ERROR", message: "Invalid input", hint: parsed.error.flatten() });
+    return;
+  }
+  const user = await prisma.user.findUnique({ where: { id: req.user!.sub } });
+  if (!user || !(await bcrypt.compare(parsed.data.currentPassword, user.password))) {
+    res.status(401).json({ code: "INVALID_PASSWORD", message: "Current password is incorrect", hint: "" });
+    return;
+  }
+  const hashed = await bcrypt.hash(parsed.data.newPassword, 12);
+  await prisma.user.update({ where: { id: req.user!.sub }, data: { password: hashed } });
+  res.json({ ok: true });
 });
 
 export default router;
