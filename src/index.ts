@@ -6,6 +6,7 @@ import authRouter from "./routes/auth";
 import projectsRouter from "./routes/projects";
 import reportsRouter, { getReport } from "./routes/reports";
 import defectsRouter from "./routes/defects";
+import stagesRouter from "./routes/stages";
 import { requireAuth } from "./middleware/auth";
 // test 1
 const app = express();
@@ -26,6 +27,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/projects", projectsRouter);
 app.use("/api/v1/projects/:projectId/reports", reportsRouter);
 app.use("/api/v1/projects/:projectId/defects", defectsRouter);
+app.use("/api/v1/projects/:projectId/stages", stagesRouter);
 app.get("/api/v1/reports/:id", requireAuth, (req, res) =>
   getReport(req as import("./middleware/auth").AuthRequest, res),
 );

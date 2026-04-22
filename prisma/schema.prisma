@@ -26,17 +26,20 @@ model User {
 }
 
 model Project {
-  id          String   @id @default(uuid())
-  name        String
-  description String   @default("")
-  ownerId     String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String    @id @default(uuid())
+  name            String
+  description     String    @default("")
+  ownerId         String
+  actualStartDate DateTime?
+  actualEndDate   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   owner    User             @relation("ProjectOwner", fields: [ownerId], references: [id])
   managers ProjectManager[]
   reports  Report[]
   defects  Defect[]
+  stages   Stage[]
 }
 
 model ProjectManager {
@@ -54,6 +57,7 @@ model Report {
   id          String   @id @default(uuid())
   projectId   String
   authorId    String
+  stageId     String?
   notes       String
   title       String?  // AI-extracted short title (max 5 words)
   status      String   @default("pending") // "pending" | "generating" | "done" | "failed"
@@ -64,6 +68,7 @@ model Report {
 
   project Project      @relation(fields: [projectId], references: [id])
   author  User         @relation(fields: [authorId], references: [id])
+  stage   Stage?       @relation(fields: [stageId], references: [id], onDelete: SetNull)
   images  ReportImage[]
   job     ReportJob?
 }
@@ -91,7 +96,7 @@ model ReportJob {
 model Defect {
   id           String    @id @default(uuid())
   projectId    String
-  phaseId      String?
+  stageId      String?
   title        String
   photoUrl     String
   cloudinaryId String
@@ -106,6 +111,25 @@ model Defect {
   updatedAt      DateTime  @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage   Stage?  @relation(fields: [stageId], references: [id], onDelete: SetNull)
+}
+
+model Stage {
+  id            String    @id @default(uuid())
+  projectId     String
+  title         String
+  description   String?
+  color         String    @default("#6366f1")
+  durationWeeks Int?
+  startDate     DateTime?
+  endDate       DateTime?
+  order         Int
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reports Report[]
+  defects Defect[]
 }
 
 model RefreshToken {

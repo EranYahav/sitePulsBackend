@@ -8,6 +8,8 @@ const router = Router();
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
+  actualStartDate: z.string().datetime({ offset: true }).optional().nullable(),
+  actualEndDate: z.string().datetime({ offset: true }).optional().nullable(),
 });
 
 router.use(requireAuth);
@@ -90,7 +92,15 @@ router.patch("/:id", async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const updated = await prisma.project.update({ where: { id }, data: parsed.data });
+  const { actualStartDate, actualEndDate, ...rest } = parsed.data;
+  const updated = await prisma.project.update({
+    where: { id },
+    data: {
+      ...rest,
+      ...(actualStartDate !== undefined && { actualStartDate: actualStartDate ? new Date(actualStartDate) : null }),
+      ...(actualEndDate !== undefined && { actualEndDate: actualEndDate ? new Date(actualEndDate) : null }),
+    },
+  });
   res.json(updated);
 });
 
