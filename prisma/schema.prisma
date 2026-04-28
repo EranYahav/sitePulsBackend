@@ -124,12 +124,15 @@ model Stage {
   startDate     DateTime?
   endDate       DateTime?
   order         Int
+  dependsOnId   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  reports Report[]
-  defects Defect[]
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dependsOn Stage?   @relation("StageDependency", fields: [dependsOnId], references: [id], onDelete: SetNull)
+  dependents Stage[] @relation("StageDependency")
+  reports   Report[]
+  defects   Defect[]
 }
 
 model RefreshToken {
