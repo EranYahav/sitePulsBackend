@@ -2,12 +2,22 @@ import { Router, Response } from "express";
 import { z } from "zod";
 import prisma from "../lib/prisma";
 import { requireAuth, AuthRequest } from "../middleware/auth";
+import { seedProjectFromType } from "../lib/seedProjectFromType";
 
 const router = Router();
 
 const createSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
+  projectTypeId: z.string().uuid(),
+  actualStartDate: z.string().datetime({ offset: true }).optional().nullable(),
+  actualEndDate: z.string().datetime({ offset: true }).optional().nullable(),
+});
+
+const updateSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  projectTypeId: z.string().uuid().optional(),
   actualStartDate: z.string().datetime({ offset: true }).optional().nullable(),
   actualEndDate: z.string().datetime({ offset: true }).optional().nullable(),
 });
@@ -57,10 +67,48 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  const type = await prisma.projectType.findUnique({ where: { id: parsed.data.projectTypeId } });
+  if (!type || !type.isActive) {
+    res.status(400).json({ code: "INVALID_PROJECT_TYPE", message: "Project type not found or inactive", hint: "" });
+    return;
+  }
+
+  const { actualStartDate, actualEndDate, projectTypeId, ...rest } = parsed.data;
   const project = await prisma.project.create({
-    data: { ...parsed.data, ownerId: req.user!.sub },
+    data: {
+      ...rest,
+      projectTypeId,
+      ownerId: req.user!.sub,
+      ...(actualStartDate && { actualStartDate: new Date(actualStartDate) }),
+      ...(actualEndDate && { actualEndDate: new Date(actualEndDate) }),
+    },
   });
+
+  await seedProjectFromType(project.id, projectTypeId, "create");
+
   res.status(201).json(project);
+});
+
+// POST /api/v1/projects/:id/reimport-templates — additive merge of the type's templates.
+router.post("/:id/reimport-templates", async (req: AuthRequest, res: Response) => {
+  if (req.user!.role !== "supervisor") {
+    res.status(403).json({ code: "FORBIDDEN", message: "Only supervisors can re-import", hint: "" });
+    return;
+  }
+
+  const id = req.params["id"] as string;
+  const project = await prisma.project.findFirst({ where: { id, ownerId: req.user!.sub } });
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  if (!project.projectTypeId) {
+    res.status(400).json({ code: "NO_PROJECT_TYPE", message: "Project has no type to re-import from", hint: "" });
+    return;
+  }
+
+  const result = await seedProjectFromType(project.id, project.projectTypeId, "reimport");
+  res.json(result);
 });
 
 router.get("/:id", async (req: AuthRequest, res: Response) => {
@@ -86,7 +134,7 @@ router.patch("/:id", async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const parsed = createSchema.partial().safeParse(req.body);
+  const parsed = updateSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ code: "VALIDATION_ERROR", message: "Invalid input", hint: parsed.error.flatten() });
     return;

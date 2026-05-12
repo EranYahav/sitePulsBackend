@@ -10,19 +10,23 @@ import { analyzeDefect } from "../services/ai";
 const router = Router({ mergeParams: true });
 
 const VALID_URGENCIES = ["high", "medium", "low"] as const;
-const VALID_DOMAINS = ["electrical", "plumbing", "drywall", "tiling", "paint", "structure", "other"] as const;
 const VALID_STATUSES = ["open", "assigned", "resolved"] as const;
 const VALID_SORTS = ["urgency", "date", "tradesperson", "reminderDate"] as const;
 
 const createSchema = z.object({
   title: z.string().min(1, "Title is required"),
   urgency: z.enum(VALID_URGENCIES),
-  domain: z.enum(VALID_DOMAINS),
+  domain: z.string().min(1, "Domain is required"),
   description: z.string().optional(),
   tradesperson: z.string().optional(),
   reminderDate: z.string().datetime({ offset: true }).optional().nullable(),
-  phaseId: z.string().optional().nullable(),
+  stageId: z.string().optional().nullable(),
 });
+
+async function validateDomain(key: string): Promise<boolean> {
+  const d = await prisma.defectDomain.findUnique({ where: { key } });
+  return !!d && d.isActive;
+}
 
 const statusSchema = z.object({
   status: z.enum(VALID_STATUSES).optional(),
@@ -124,12 +128,17 @@ router.post(
       description: req.body.description || undefined,
       tradesperson: req.body.tradesperson || undefined,
       reminderDate: req.body.reminderDate || undefined,
-      phaseId: req.body.phaseId || undefined,
+      stageId: req.body.stageId || undefined,
     };
 
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       res.status(400).json({ code: "VALIDATION_ERROR", message: "Invalid fields", hint: parsed.error.flatten() });
+      return;
+    }
+
+    if (!(await validateDomain(parsed.data.domain))) {
+      res.status(400).json({ code: "INVALID_DOMAIN", message: "Unknown or inactive defect domain", hint: "" });
       return;
     }
 
@@ -144,7 +153,7 @@ router.post(
     const defect = await prisma.defect.create({
       data: {
         projectId,
-        phaseId: parsed.data.phaseId ?? null,
+        stageId: parsed.data.stageId ?? null,
         title: parsed.data.title,
         description: parsed.data.description ?? null,
         photoUrl,
@@ -242,6 +251,11 @@ router.put(
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       res.status(400).json({ code: "VALIDATION_ERROR", message: "Invalid fields", hint: parsed.error.flatten() });
+      return;
+    }
+
+    if (!(await validateDomain(parsed.data.domain))) {
+      res.status(400).json({ code: "INVALID_DOMAIN", message: "Unknown or inactive defect domain", hint: "" });
       return;
     }
 

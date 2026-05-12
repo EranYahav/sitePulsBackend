@@ -23,6 +23,7 @@ model User {
   managedProjects  ProjectManager[]
   reports          Report[]
   refreshTokens    RefreshToken[]
+  approvedChecks   Check[]          @relation("CheckApprover")
 }
 
 model Project {
@@ -30,16 +31,18 @@ model Project {
   name            String
   description     String    @default("")
   ownerId         String
+  projectTypeId   String?
   actualStartDate DateTime?
   actualEndDate   DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  owner    User             @relation("ProjectOwner", fields: [ownerId], references: [id])
-  managers ProjectManager[]
-  reports  Report[]
-  defects  Defect[]
-  stages   Stage[]
+  owner       User             @relation("ProjectOwner", fields: [ownerId], references: [id])
+  projectType ProjectType?     @relation(fields: [projectTypeId], references: [id], onDelete: SetNull)
+  managers    ProjectManager[]
+  reports     Report[]
+  defects     Defect[]
+  stages      Stage[]
 }
 
 model ProjectManager {
@@ -112,6 +115,7 @@ model Defect {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage   Stage?  @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  check   Check?
 }
 
 model Stage {
@@ -125,14 +129,28 @@ model Stage {
   endDate       DateTime?
   order         Int
   dependsOnId   String?
+  templateId    String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   dependsOn Stage?   @relation("StageDependency", fields: [dependsOnId], references: [id], onDelete: SetNull)
   dependents Stage[] @relation("StageDependency")
+  template  StageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   reports   Report[]
   defects   Defect[]
+  checks    Check[]
+}
+
+model DefectDomain {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  nameHe    String
+  nameEn    String?
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model RefreshToken {
@@ -143,4 +161,77 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
+}
+
+model ProjectType {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  nameHe      String
+  nameEn      String?
+  description String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  stageTemplates StageTemplate[]
+  projects       Project[]
+}
+
+model StageTemplate {
+  id                   String   @id @default(uuid())
+  projectTypeId        String
+  title                String
+  description          String?
+  color                String   @default("#6366f1")
+  defaultDurationWeeks Int?
+  order                Int
+
+  projectType    ProjectType     @relation(fields: [projectTypeId], references: [id], onDelete: Cascade)
+  checkTemplates CheckTemplate[]
+  stages         Stage[]
+
+  @@index([projectTypeId])
+}
+
+model CheckTemplate {
+  id              String  @id @default(uuid())
+  stageTemplateId String
+  text            String
+  order           Int
+  isRequired      Boolean @default(true)
+
+  stageTemplate StageTemplate @relation(fields: [stageTemplateId], references: [id], onDelete: Cascade)
+  checks        Check[]
+
+  @@index([stageTemplateId])
+}
+
+model Check {
+  id           String    @id @default(uuid())
+  stageId      String
+  templateId   String?
+  text         String
+  order        Int
+  isRelevant   Boolean   @default(true)
+
+  status       String    @default("pending") // "pending" | "approved" | "failed"
+  approvedAt   DateTime?
+  approvedById String?
+  notes        String?
+
+  photoUrl     String?
+  cloudinaryId String?
+
+  defectId     String?   @unique
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  stage      Stage          @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  template   CheckTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  approvedBy User?          @relation("CheckApprover", fields: [approvedById], references: [id])
+  defect     Defect?        @relation(fields: [defectId], references: [id], onDelete: SetNull)
+
+  @@index([stageId])
+  @@index([status])
 }

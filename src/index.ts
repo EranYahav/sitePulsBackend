@@ -7,6 +7,9 @@ import projectsRouter from "./routes/projects";
 import reportsRouter, { getReport } from "./routes/reports";
 import defectsRouter from "./routes/defects";
 import stagesRouter from "./routes/stages";
+import projectTypesRouter from "./routes/projectTypes";
+import checksRouter from "./routes/checks";
+import defectDomainsRouter from "./routes/defectDomains";
 import { requireAuth } from "./middleware/auth";
 // test 1
 const app = express();
@@ -24,10 +27,13 @@ app.get("/api/v1/health", (_req, res) => {
 });
 
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/project-types", projectTypesRouter);
+app.use("/api/v1/defect-domains", defectDomainsRouter);
 app.use("/api/v1/projects", projectsRouter);
 app.use("/api/v1/projects/:projectId/reports", reportsRouter);
 app.use("/api/v1/projects/:projectId/defects", defectsRouter);
 app.use("/api/v1/projects/:projectId/stages", stagesRouter);
+app.use("/api/v1/projects/:projectId/stages/:stageId/checks", checksRouter);
 app.get("/api/v1/reports/:id", requireAuth, (req, res) =>
   getReport(req as import("./middleware/auth").AuthRequest, res),
 );
