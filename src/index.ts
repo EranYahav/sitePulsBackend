@@ -7,6 +7,7 @@ import projectsRouter from "./routes/projects";
 import reportsRouter, { getReport } from "./routes/reports";
 import defectsRouter from "./routes/defects";
 import stagesRouter from "./routes/stages";
+import documentsRouter from "./routes/documents";
 import projectTypesRouter from "./routes/projectTypes";
 import checksRouter from "./routes/checks";
 import defectDomainsRouter from "./routes/defectDomains";
@@ -33,6 +34,7 @@ app.use("/api/v1/projects", projectsRouter);
 app.use("/api/v1/projects/:projectId/reports", reportsRouter);
 app.use("/api/v1/projects/:projectId/defects", defectsRouter);
 app.use("/api/v1/projects/:projectId/stages", stagesRouter);
+app.use("/api/v1/projects/:projectId/documents", documentsRouter);
 app.use("/api/v1/projects/:projectId/stages/:stageId/checks", checksRouter);
 app.get("/api/v1/reports/:id", requireAuth, (req, res) =>
   getReport(req as import("./middleware/auth").AuthRequest, res),
