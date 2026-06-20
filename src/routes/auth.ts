@@ -4,6 +4,8 @@ import { z } from "zod";
 import prisma from "../lib/prisma";
 import { signAccessToken, verifyAccessToken, generateRefreshToken } from "../lib/jwt";
 import { requireAuth, AuthRequest } from "../middleware/auth";
+import { upload } from "../middleware/upload";
+import { uploadStream, deleteAsset } from "../services/cloudinary";
 
 const router = Router();
 
@@ -89,7 +91,7 @@ router.post("/refresh", async (req: Request, res: Response) => {
 router.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.sub },
-    select: { id: true, email: true, name: true, role: true, companyName: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+    select: { id: true, email: true, name: true, role: true, companyName: true, companyLogoUrl: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
   });
   res.json(user);
 });
@@ -117,7 +119,36 @@ router.put("/profile", requireAuth, async (req: AuthRequest, res: Response) => {
       phoneNumber: parsed.data.phoneNumber || null,
       whatsappNumber: parsed.data.whatsappNumber || null,
     },
-    select: { id: true, email: true, name: true, role: true, companyName: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+    select: { id: true, email: true, name: true, role: true, companyName: true, companyLogoUrl: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+  });
+  res.json(user);
+});
+
+// POST /auth/logo — branded client portal header (E3). Uploads the inspector's logo.
+router.post("/logo", requireAuth, upload.single("file"), async (req: AuthRequest, res: Response) => {
+  if (!req.file) {
+    res.status(400).json({ code: "VALIDATION_ERROR", message: "Logo file is required", hint: "" });
+    return;
+  }
+  const existing = await prisma.user.findUnique({ where: { id: req.user!.sub }, select: { companyLogoCloudinaryId: true } });
+
+  let result;
+  try {
+    result = await uploadStream(req.file.buffer, "image", "onePulse/logo");
+  } catch (err) {
+    console.error("logo upload failed", { userId: req.user!.sub, err });
+    res.status(502).json({ code: "UPLOAD_FAILED", message: "Logo upload failed", hint: "Try again" });
+    return;
+  }
+
+  if (existing?.companyLogoCloudinaryId) {
+    await deleteAsset(existing.companyLogoCloudinaryId, "image").catch(() => { /* best-effort cleanup */ });
+  }
+
+  const user = await prisma.user.update({
+    where: { id: req.user!.sub },
+    data: { companyLogoUrl: result.url, companyLogoCloudinaryId: result.publicId },
+    select: { id: true, companyName: true, companyLogoUrl: true },
   });
   res.json(user);
 });

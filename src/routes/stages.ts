@@ -223,6 +223,128 @@ router.post("/", async (req: AuthRequest, res: Response) => {
   res.status(201).json({ ...stage, dependsOnId: persistedDep });
 });
 
+// GET /projects/:projectId/stages/available-templates
+// Preset stages from the project's type that aren't in the project yet (matched by
+// templateId) — so the inspector can add pre-defined stages retroactively.
+router.get("/available-templates", async (req: AuthRequest, res: Response) => {
+  const projectId = req.params["projectId"] as string;
+  const project = await getProjectWithAccess(projectId, req.user!.sub, req.user!.role);
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  if (!project.projectTypeId) {
+    res.json([]);
+    return;
+  }
+  const type = await prisma.projectType.findUnique({
+    where: { id: project.projectTypeId },
+    include: {
+      stageTemplates: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { checkTemplates: true } } },
+      },
+    },
+  });
+  if (!type) {
+    res.json([]);
+    return;
+  }
+  const existing = await prisma.stage.findMany({
+    where: { projectId, templateId: { not: null } },
+    select: { templateId: true },
+  });
+  const have = new Set(existing.map((s) => s.templateId));
+  const available = type.stageTemplates
+    .filter((st) => !have.has(st.id))
+    .map((st) => ({
+      templateId: st.id,
+      title: st.title,
+      description: st.description,
+      defaultDurationWeeks: st.defaultDurationWeeks,
+      order: st.order,
+      checkCount: st._count.checkTemplates,
+    }));
+  res.json(available);
+});
+
+// POST /projects/:projectId/stages/from-templates  body { templateIds: string[] }
+// Add selected preset stages (with their check templates) to the project. Skips any
+// already present; respects the MAX_STAGES cap.
+router.post("/from-templates", async (req: AuthRequest, res: Response) => {
+  const projectId = req.params["projectId"] as string;
+  const project = await getProjectWithAccess(projectId, req.user!.sub, req.user!.role);
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  if (!project.projectTypeId) {
+    res.status(400).json({ code: "NO_PROJECT_TYPE", message: "Project has no type", hint: "" });
+    return;
+  }
+  const parsed = z.object({ templateIds: z.array(z.string().uuid()).min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ code: "VALIDATION_ERROR", message: "templateIds required", hint: parsed.error.flatten() });
+    return;
+  }
+
+  const type = await prisma.projectType.findUnique({
+    where: { id: project.projectTypeId },
+    include: {
+      stageTemplates: {
+        where: { id: { in: parsed.data.templateIds } },
+        orderBy: { order: "asc" },
+        include: { checkTemplates: { orderBy: { order: "asc" } } },
+      },
+    },
+  });
+  if (!type) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project type not found", hint: "" });
+    return;
+  }
+
+  const existing = await prisma.stage.findMany({
+    where: { projectId, templateId: { not: null } },
+    select: { templateId: true },
+  });
+  const have = new Set(existing.map((s) => s.templateId));
+
+  const usedColors = new Set(
+    (await prisma.stage.findMany({ where: { projectId }, select: { color: true } })).map((s) => s.color),
+  );
+  const startCount = await prisma.stage.count({ where: { projectId } });
+  const maxOrderRow = await prisma.stage.aggregate({ where: { projectId }, _max: { order: true } });
+  let order = (maxOrderRow._max.order ?? -1) + 1;
+  let count = startCount;
+
+  await prisma.$transaction(async (tx) => {
+    for (const st of type.stageTemplates) {
+      if (have.has(st.id) || count >= MAX_STAGES) continue;
+      const color = STAGE_COLORS.find((c) => !usedColors.has(c)) ?? STAGE_COLORS[order % STAGE_COLORS.length]!;
+      usedColors.add(color);
+      const created = await tx.stage.create({
+        data: {
+          projectId,
+          templateId: st.id,
+          title: st.title,
+          description: st.description,
+          color,
+          durationWeeks: st.defaultDurationWeeks,
+          order: order++,
+        },
+      });
+      count++;
+      for (let j = 0; j < st.checkTemplates.length; j++) {
+        const ct = st.checkTemplates[j]!;
+        await tx.check.create({ data: { stageId: created.id, templateId: ct.id, text: ct.text, order: j } });
+      }
+    }
+  });
+
+  const stages = await listStages(projectId);
+  res.json(stages);
+});
+
 // PUT /projects/:projectId/stages/reorder  (must be before /:stageId)
 router.put("/reorder", async (req: AuthRequest, res: Response) => {
   const projectId = req.params["projectId"] as string;
@@ -354,6 +476,32 @@ router.put("/:stageId", async (req: AuthRequest, res: Response) => {
   res.json(stages);
 });
 
+// GET /projects/:projectId/stages/:stageId/delete-impact
+// What deleting this stage will affect: its checks are cascade-DELETED (incl. documented
+// ones), while reports & defects are unlinked (stageId → null). Surfaced so the confirm
+// dialog is never a silent data-loss surprise.
+router.get("/:stageId/delete-impact", async (req: AuthRequest, res: Response) => {
+  const { projectId, stageId } = req.params as { projectId: string; stageId: string };
+  const project = await getProjectWithAccess(projectId, req.user!.sub, req.user!.role);
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  const stage = await prisma.stage.findFirst({ where: { id: stageId, projectId } });
+  if (!stage) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Stage not found", hint: "" });
+    return;
+  }
+  const [checksAll, reports, defects] = await Promise.all([
+    prisma.check.findMany({ where: { stageId }, select: { status: true, photoUrl: true } }),
+    prisma.report.count({ where: { stageId } }),
+    prisma.defect.count({ where: { stageId } }),
+  ]);
+  // "Documented" = carries recorded evidence we'd be destroying (approved/failed or a photo).
+  const documentedChecks = checksAll.filter((c) => c.status !== "pending" || c.photoUrl).length;
+  res.json({ checks: checksAll.length, documentedChecks, reports, defects });
+});
+
 // DELETE /projects/:projectId/stages/:stageId
 router.delete("/:stageId", async (req: AuthRequest, res: Response) => {
   const { projectId, stageId } = req.params as { projectId: string; stageId: string };
@@ -369,8 +517,93 @@ router.delete("/:stageId", async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  // Dependency repair: stages that depend on the one being deleted get re-pointed to
+  // ITS predecessor (the stage it depended on), so the chain isn't broken. Then their
+  // dates are recomputed from the new parent and cascaded forward. If the deleted stage
+  // had no predecessor, dependents are left unlinked (dates kept) for the user to adjust.
+  const predecessorId = await getDependsOnId(stageId);
+  const dependentRows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "Stage" WHERE "projectId" = ${projectId} AND "dependsOnId" = ${stageId}
+  `;
+  const predecessor = predecessorId
+    ? await prisma.stage.findFirst({ where: { id: predecessorId, projectId } })
+    : null;
+
   await prisma.stage.delete({ where: { id: stageId } });
-  res.status(204).send();
+
+  for (const { id: depId } of dependentRows) {
+    await setDependsOnId(depId, predecessorId); // re-link to predecessor (or null)
+    if (predecessor?.endDate) {
+      const dep = await prisma.stage.findFirst({ where: { id: depId } });
+      if (dep) {
+        const durWeeks =
+          dep.durationWeeks ??
+          (dep.startDate && dep.endDate
+            ? Math.max(1, Math.round((dep.endDate.getTime() - dep.startDate.getTime()) / (7 * 24 * 60 * 60 * 1000)))
+            : 1);
+        const newStart = new Date(predecessor.endDate.getTime() + 24 * 60 * 60 * 1000);
+        const derived = deriveWeeksAndEnd({ startDate: newStart.toISOString(), durationWeeks: durWeeks });
+        await prisma.stage.update({
+          where: { id: depId },
+          data: { startDate: newStart, endDate: derived.endDate ?? null, durationWeeks: derived.durationWeeks ?? durWeeks },
+        });
+        if (derived.endDate) await cascadeDependents(projectId, depId, derived.endDate);
+      }
+    }
+  }
+
+  // Return the full updated list so the client reflects re-linked dependents + new dates.
+  const stages = await listStages(projectId);
+  res.json(stages);
+});
+
+// POST /projects/:projectId/stages/:stageId/complete — mark a stage complete / reopen.
+// Marking complete is the milestone EVENT. Reopening also unpublishes (a milestone the
+// client saw as done shouldn't linger published once it's reopened — T3 covers richer
+// revert semantics later).
+router.post("/:stageId/complete", async (req: AuthRequest, res: Response) => {
+  const { projectId, stageId } = req.params as { projectId: string; stageId: string };
+  const project = await getProjectWithAccess(projectId, req.user!.sub, req.user!.role);
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  const stage = await prisma.stage.findFirst({ where: { id: stageId, projectId } });
+  if (!stage) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Stage not found", hint: "" });
+    return;
+  }
+  const completed = (req.body as { completed?: boolean }).completed !== false;
+  const updated = await prisma.stage.update({
+    where: { id: stageId },
+    data: completed
+      ? { completedAt: stage.completedAt ?? new Date() } // idempotent: don't reset the date on re-complete
+      : { completedAt: null, clientPublished: false },
+  });
+  res.json(updated);
+});
+
+// POST /projects/:projectId/stages/:stageId/publish — publish/unpublish the milestone.
+// Inspector controls WHEN the client sees it. Cannot publish a stage that isn't complete.
+router.post("/:stageId/publish", async (req: AuthRequest, res: Response) => {
+  const { projectId, stageId } = req.params as { projectId: string; stageId: string };
+  const project = await getProjectWithAccess(projectId, req.user!.sub, req.user!.role);
+  if (!project) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Project not found", hint: "" });
+    return;
+  }
+  const stage = await prisma.stage.findFirst({ where: { id: stageId, projectId } });
+  if (!stage) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Stage not found", hint: "" });
+    return;
+  }
+  const published = (req.body as { published?: boolean }).published === true;
+  if (published && !stage.completedAt) {
+    res.status(400).json({ code: "NOT_COMPLETE", message: "Cannot publish a milestone that isn't marked complete", hint: "Mark the stage complete first" });
+    return;
+  }
+  const updated = await prisma.stage.update({ where: { id: stageId }, data: { clientPublished: published } });
+  res.json(updated);
 });
 
 export default router;

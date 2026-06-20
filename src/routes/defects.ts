@@ -31,6 +31,7 @@ async function validateDomain(key: string): Promise<boolean> {
 const statusSchema = z.object({
   status: z.enum(VALID_STATUSES).optional(),
   trackingNotes: z.string().optional(),
+  clientVisible: z.boolean().optional(), // inspector opts a defect into the client portal
 });
 
 router.use(requireAuth);
@@ -215,11 +216,60 @@ router.patch("/:defectId", async (req: AuthRequest, res: Response) => {
     data: {
       ...(parsed.data.status !== undefined && { status: parsed.data.status }),
       ...(parsed.data.trackingNotes !== undefined && { trackingNotes: parsed.data.trackingNotes || null }),
+      ...(parsed.data.clientVisible !== undefined && { clientVisible: parsed.data.clientVisible }),
     },
   });
 
   res.json(updated);
 });
+
+// POST /projects/:projectId/defects/:defectId/resolution-photo — capture the "after"
+// photo (E2 before/after). Upload-first, status-second: if the upload fails we keep the
+// defect open and surface the error rather than silently marking it resolved.
+router.post(
+  "/:defectId/resolution-photo",
+  upload.single("file"),
+  async (req: AuthRequest, res: Response) => {
+    const { projectId, defectId } = req.params as { projectId: string; defectId: string };
+    if (req.user!.role !== "supervisor") {
+      res.status(403).json({ code: "FORBIDDEN", message: "Only supervisors can update defects", hint: "" });
+      return;
+    }
+    const defect = await prisma.defect.findUnique({ where: { id: defectId } });
+    if (!defect || defect.projectId !== projectId) {
+      res.status(404).json({ code: "NOT_FOUND", message: "Defect not found", hint: "" });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ code: "VALIDATION_ERROR", message: "Resolution photo file is required", hint: "" });
+      return;
+    }
+
+    let result;
+    try {
+      result = await uploadStream(req.file.buffer, "image", "onePulse/defect");
+    } catch (err) {
+      console.error("resolution photo upload failed", { defectId, err });
+      res.status(502).json({ code: "UPLOAD_FAILED", message: "Photo upload failed — defect not changed", hint: "Try again" });
+      return;
+    }
+
+    if (defect.resolvedCloudinaryId) {
+      await deleteAsset(defect.resolvedCloudinaryId, "image").catch(() => { /* old asset cleanup best-effort */ });
+    }
+
+    const markResolved = (req.body as { markResolved?: string }).markResolved === "true";
+    const updated = await prisma.defect.update({
+      where: { id: defectId },
+      data: {
+        resolvedPhotoUrl: result.url,
+        resolvedCloudinaryId: result.publicId,
+        ...(markResolved && { status: "resolved" }),
+      },
+    });
+    res.json(updated);
+  },
+);
 
 // PUT /projects/:projectId/defects/:defectId — edit all fields (optional photo replacement)
 router.put(

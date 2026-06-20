@@ -14,6 +14,8 @@ model User {
   name           String
   role           String   @default("supervisor") // "supervisor" | "manager"
   companyName    String?
+  companyLogoUrl        String?  // branded client portal header (E3)
+  companyLogoCloudinaryId String?
   mobileNumber   String?
   phoneNumber    String?
   whatsappNumber String?
@@ -45,6 +47,7 @@ model Project {
   defects     Defect[]
   stages      Stage[]
   resources   Resource[]
+  shareLink   ShareLink?
 }
 
 model ProjectManager {
@@ -68,6 +71,7 @@ model Report {
   status      String   @default("pending") // "pending" | "generating" | "done" | "failed"
   reportData  String?  // JSON string of structured AI report
   pdfPublicId String?  // Cloudinary public_id for signed URL re-issue
+  clientPublished Boolean @default(false) // inspector controls when a report appears on the client portal
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -112,6 +116,9 @@ model Defect {
   reminderDate DateTime?
   status         String    @default("open") // "open" | "assigned" | "resolved"
   trackingNotes  String?
+  clientVisible        Boolean  @default(false) // defects hidden from client by default; inspector opts in
+  resolvedPhotoUrl     String?  // before/after: the "after" photo captured at resolution (E2)
+  resolvedCloudinaryId String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -132,6 +139,8 @@ model Stage {
   order         Int
   dependsOnId   String?
   templateId    String?
+  completedAt     DateTime? // inspector marks a stage complete; this is the milestone event
+  clientPublished Boolean   @default(false) // milestone appears on the portal only when published (E1)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -171,6 +180,22 @@ model DefectDomain {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ShareLink {
+  id           String    @id @default(uuid())
+  projectId    String    @unique // one live link per project; revoke + recreate to rotate the token
+  token        String    @unique // >=128-bit unguessable; resolved by the public portal middleware
+  revoked      Boolean   @default(false)
+  expiresAt    DateTime? // auto-expiry (S2); null = no expiry
+  lastViewedAt DateTime? // read-receipt for the inspector (E4)
+  viewCount    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([token])
 }
 
 model RefreshToken {

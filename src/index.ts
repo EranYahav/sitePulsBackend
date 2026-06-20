@@ -11,6 +11,8 @@ import documentsRouter from "./routes/documents";
 import projectTypesRouter from "./routes/projectTypes";
 import checksRouter from "./routes/checks";
 import defectDomainsRouter from "./routes/defectDomains";
+import portalRouter from "./routes/portal";
+import shareLinksRouter from "./routes/shareLinks";
 import { requireAuth } from "./middleware/auth";
 // test 1
 const app = express();
@@ -27,6 +29,10 @@ app.get("/api/v1/health", (_req, res) => {
   res.json({ status: "ok", service: "site-pulse-backend" });
 });
 
+// Public client portal — NO auth (token-scoped via portalAuth middleware).
+// Mounted before the authed routers; portalRouter handles its own access control.
+app.use("/api/v1/portal", portalRouter);
+
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/project-types", projectTypesRouter);
 app.use("/api/v1/defect-domains", defectDomainsRouter);
@@ -34,6 +40,7 @@ app.use("/api/v1/projects", projectsRouter);
 app.use("/api/v1/projects/:projectId/reports", reportsRouter);
 app.use("/api/v1/projects/:projectId/defects", defectsRouter);
 app.use("/api/v1/projects/:projectId/stages", stagesRouter);
+app.use("/api/v1/projects/:projectId/share-link", shareLinksRouter);
 app.use("/api/v1/projects/:projectId/documents", documentsRouter);
 app.use("/api/v1/projects/:projectId/stages/:stageId/checks", checksRouter);
 app.get("/api/v1/reports/:id", requireAuth, (req, res) =>

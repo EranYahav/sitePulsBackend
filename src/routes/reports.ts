@@ -12,8 +12,17 @@ const router = Router({ mergeParams: true });
 const createSchema = z.object({
   notes: z.string().min(1, "Notes cannot be empty"),
   lang: z.enum(["en", "he", "ru", "ar"]).default("en"),
+  stageId: z.string().uuid().optional().nullable(),
 });
 
+// The stage that contains "now" (start <= today <= end), first by order. Used as the
+// default stage link when a report is created without an explicit stage.
+async function currentStageId(projectId: string): Promise<string | null> {
+  const now = new Date();
+  const stages = await prisma.stage.findMany({ where: { projectId }, orderBy: { order: "asc" } });
+  const cur = stages.find((s) => s.startDate && s.endDate && s.startDate <= now && now <= s.endDate);
+  return cur?.id ?? null;
+}
 
 router.use(requireAuth);
 
@@ -28,9 +37,24 @@ router.get("/", async (req: AuthRequest, res: Response) => {
   const reports = await prisma.report.findMany({
     where: { projectId },
     orderBy: { createdAt: "desc" },
-    select: { id: true, status: true, notes: true, createdAt: true, title: true, reportData: true },
+    select: {
+      id: true, status: true, notes: true, createdAt: true, title: true, reportData: true,
+      stageId: true,
+      stage: { select: { title: true } },
+      images: { select: { url: true } },
+    },
   });
-  res.json(reports);
+  // Media type isn't stored as a column; infer video vs photo from the Cloudinary URL.
+  const shaped = reports.map(({ stage, images, ...r }) => {
+    const videoCount = images.filter((i) => i.url.includes("/video/")).length;
+    return {
+      ...r,
+      stageTitle: stage?.title ?? null,
+      photoCount: images.length - videoCount,
+      videoCount,
+    };
+  });
+  res.json(shaped);
 });
 
 // POST /projects/:projectId/reports
@@ -54,8 +78,20 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     return;
   }
 
+  // Resolve the stage link: explicit stageId (validated) or the current stage by date.
+  let stageId = parsed.data.stageId ?? null;
+  if (stageId) {
+    const stg = await prisma.stage.findFirst({ where: { id: stageId, projectId } });
+    if (!stg) {
+      res.status(400).json({ code: "INVALID_STAGE", message: "Stage not found in this project", hint: "" });
+      return;
+    }
+  } else {
+    stageId = await currentStageId(projectId);
+  }
+
   const report = await prisma.report.create({
-    data: { projectId, authorId: req.user!.sub, notes: parsed.data.notes, status: "pending" },
+    data: { projectId, authorId: req.user!.sub, notes: parsed.data.notes, status: "pending", stageId },
   });
 
   // Kick off async AI generation (non-blocking)
@@ -118,6 +154,39 @@ router.patch("/:reportId/data", async (req: AuthRequest, res: Response) => {
   if (typeof req.body.title === "string") updatePayload.title = req.body.title;
 
   const updated = await prisma.report.update({ where: { id: reportId }, data: updatePayload });
+  res.json(updated);
+});
+
+// PATCH /projects/:projectId/reports/:reportId/stage — change only the linked stage.
+// Used to assign/re-assign a report's stage (incl. picking a new one after the original
+// stage was deleted, which leaves stageId = null). No AI re-run.
+router.patch("/:reportId/stage", async (req: AuthRequest, res: Response) => {
+  const { projectId, reportId } = req.params as { projectId: string; reportId: string };
+
+  const report = await prisma.report.findUnique({ where: { id: reportId } });
+  if (!report || report.projectId !== projectId) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Report not found", hint: "" });
+    return;
+  }
+  if (report.authorId !== req.user!.sub) {
+    res.status(403).json({ code: "FORBIDDEN", message: "Only the author can change the stage", hint: "" });
+    return;
+  }
+
+  const parsed = z.object({ stageId: z.string().uuid().nullable() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ code: "VALIDATION_ERROR", message: "stageId required", hint: parsed.error.flatten() });
+    return;
+  }
+  if (parsed.data.stageId) {
+    const stg = await prisma.stage.findFirst({ where: { id: parsed.data.stageId, projectId } });
+    if (!stg) {
+      res.status(400).json({ code: "INVALID_STAGE", message: "Stage not found in this project", hint: "" });
+      return;
+    }
+  }
+
+  const updated = await prisma.report.update({ where: { id: reportId }, data: { stageId: parsed.data.stageId } });
   res.json(updated);
 });
 
@@ -298,6 +367,24 @@ router.get("/:reportId/media", async (req: AuthRequest, res: Response) => {
 
   const media = await prisma.reportImage.findMany({ where: { reportId } });
   res.json(media);
+});
+
+// PATCH /projects/:projectId/reports/:reportId/publish — inspector controls whether a
+// report appears on the client portal, and when.
+router.patch("/:reportId/publish", async (req: AuthRequest, res: Response) => {
+  const { projectId, reportId } = req.params as { projectId: string; reportId: string };
+  if (req.user!.role !== "supervisor") {
+    res.status(403).json({ code: "FORBIDDEN", message: "Only supervisors can publish reports", hint: "" });
+    return;
+  }
+  const report = await prisma.report.findUnique({ where: { id: reportId } });
+  if (!report || report.projectId !== projectId) {
+    res.status(404).json({ code: "NOT_FOUND", message: "Report not found", hint: "" });
+    return;
+  }
+  const published = (req.body as { published?: boolean }).published === true;
+  const updated = await prisma.report.update({ where: { id: reportId }, data: { clientPublished: published } });
+  res.json(updated);
 });
 
 export default router;
