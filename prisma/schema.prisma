@@ -27,6 +27,7 @@ model User {
   refreshTokens    RefreshToken[]
   approvedChecks   Check[]          @relation("CheckApprover")
   resources        Resource[]
+  uploadedMedia    Media[]          @relation("MediaUploader")
 }
 
 model Project {
@@ -48,6 +49,8 @@ model Project {
   stages      Stage[]
   resources   Resource[]
   shareLink   ShareLink?
+  locations   Location[]
+  media       Media[]
 }
 
 model ProjectManager {
@@ -151,6 +154,7 @@ model Stage {
   reports   Report[]
   defects   Defect[]
   checks    Check[]
+  media     Media[]
 }
 
 model Resource {
@@ -249,6 +253,51 @@ model CheckTemplate {
   checks        Check[]
 
   @@index([stageTemplateId])
+}
+
+// ─── Media Bank ──────────────────────────────────────────────────────────────
+// Photos & videos organized by Location (room ∪ area) × construction Stage.
+// Stage is auto-inferred from the project timeline at upload (user-confirmed per
+// batch); Location is optional (building-level media has none). See
+// ~/.gstack/projects/site-pulse/EranYahav-unknown-design-*.md
+
+model Location {
+  id        String   @id @default(uuid())
+  projectId String
+  name      String                       // "מטבח", "גג", "יסודות"
+  kind      String   @default("room")    // "room" | "area" — drives grouping + seed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  media   Media[]
+
+  @@index([projectId])
+}
+
+model Media {
+  id           String   @id @default(uuid())
+  projectId    String
+  stageId      String?                    // auto-inferred; user picks if parallel/undated
+  locationId   String?                    // room/area; null = building-level
+  type         String                     // "image" | "video" — UI discriminator
+  cloudinaryId String
+  url          String
+  resourceType String                     // cloudinary resource_type; drives delete
+  caption      String?
+  tradesperson String?                    // free text, reuses Defect pattern
+  capturedAt   DateTime                    // client per-file timestamp; defaults to upload time
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage      Stage?    @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  uploadedBy User      @relation("MediaUploader", fields: [uploadedById], references: [id])
+
+  @@index([projectId])
+  @@index([stageId])
+  @@index([locationId])
 }
 
 model Check {
