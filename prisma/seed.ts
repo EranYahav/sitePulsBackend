@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { SYSTEM_OWNER_ID } from "../src/lib/systemOwner";
 
 const prisma = new PrismaClient();
 
@@ -414,8 +415,10 @@ const ALL_TYPES: TypeSeed[] = [PRIVATE_HOUSE, APARTMENT_IN_BUILDING, RENOVATION,
 
 async function seedType(seed: TypeSeed): Promise<void> {
   const type = await prisma.projectType.upsert({
-    where: { key: seed.key },
+    // key is unique per owner now; system defaults are owned by the SYSTEM_OWNER_ID sentinel.
+    where: { ownerId_key: { ownerId: SYSTEM_OWNER_ID, key: seed.key } },
     create: {
+      ownerId: SYSTEM_OWNER_ID,
       key: seed.key,
       nameHe: seed.nameHe,
       nameEn: seed.nameEn ?? null,

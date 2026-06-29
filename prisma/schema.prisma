@@ -214,16 +214,31 @@ model RefreshToken {
 
 model ProjectType {
   id          String   @id @default(uuid())
-  key         String   @unique
+  // Per-inspector catalog ownership (corrected Approach A). Bare string sentinel,
+  // NOT a relation: "__system__" = global default (provisioning source); otherwise
+  // the owning supervisor's User.id. The app has no user.findMany, so an FK buys
+  // nothing. A supervisor's effective catalog = system rows whose key is neither
+  // overridden nor tombstoned by one of their owned rows, UNION their non-hidden rows.
+  ownerId     String   @default("__system__")
+  key         String
   nameHe      String
   nameEn      String?
   description String?
   order       Int      @default(0)
   isActive    Boolean  @default(true)
+  // originId: for an override (fork-on-edit), the system ProjectType.id it forked from.
+  originId    String?
+  // isHidden: tombstone marker. A deleted default = owned row, same key, isHidden=true, no subtree.
+  isHidden    Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   stageTemplates StageTemplate[]
   projects       Project[]
+
+  // key is unique per owner (was globally @unique). All ownerId values are non-null
+  // so the compound unique and findUnique({ ownerId_key }) behave correctly on SQLite.
+  @@unique([ownerId, key])
+  @@index([ownerId])
 }
 
 model StageTemplate {
