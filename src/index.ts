@@ -10,6 +10,7 @@ import stagesRouter from "./routes/stages";
 import documentsRouter from "./routes/documents";
 import projectTypesRouter from "./routes/projectTypes";
 import checksRouter from "./routes/checks";
+import mediaRouter from "./routes/media";
 import defectDomainsRouter from "./routes/defectDomains";
 import portalRouter from "./routes/portal";
 import shareLinksRouter from "./routes/shareLinks";
@@ -42,6 +43,7 @@ app.use("/api/v1/projects/:projectId/defects", defectsRouter);
 app.use("/api/v1/projects/:projectId/stages", stagesRouter);
 app.use("/api/v1/projects/:projectId/share-link", shareLinksRouter);
 app.use("/api/v1/projects/:projectId/documents", documentsRouter);
+app.use("/api/v1/projects/:projectId/media", mediaRouter);
 app.use("/api/v1/projects/:projectId/stages/:stageId/checks", checksRouter);
 app.get("/api/v1/reports/:id", requireAuth, (req, res) =>
   getReport(req as import("./middleware/auth").AuthRequest, res),
