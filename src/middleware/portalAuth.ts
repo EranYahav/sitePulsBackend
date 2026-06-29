@@ -39,16 +39,14 @@ export async function portalAuth(req: PortalRequest, res: Response, next: NextFu
 
   req.shareLink = { id: link.id, projectId: link.projectId, token: link.token };
 
-  // Read-receipt (E4) — fire-and-forget so a tracking write never blocks or breaks
-  // the homeowner's page load. Skipped for the inspector's own preview.
-  if (!req.isPreview) {
-    prisma.shareLink
-      .update({
-        where: { id: link.id },
-        data: { lastViewedAt: new Date(), viewCount: { increment: 1 } },
-      })
-      .catch(() => { /* tracking is best-effort; never surface to the client */ });
-  }
+  // The inspector's "View as Client" opens the same public URL with ?preview=1 so its
+  // own visits don't pollute the read-receipt. Tampering only suppresses a view count
+  // (no data exposure), so a plain query flag is an acceptable signal here.
+  if (req.query["preview"] === "1") req.isPreview = true;
+
+  // NOTE: read-receipt tracking is NOT done here. It lives on the portal payload route
+  // (GET /:token) so a "view" means the client actually opened the page — not each of
+  // the many image-proxy requests that page fires, which also pass through this middleware.
 
   next();
 }
