@@ -20,6 +20,14 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   }
 }
 
+export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.user?.isAdmin) {
+    res.status(403).json({ code: "FORBIDDEN", message: "Admin access required", hint: "This route is restricted to app administrators" });
+    return;
+  }
+  next();
+}
+
 export function requireRole(role: string) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (req.user?.role !== role) {

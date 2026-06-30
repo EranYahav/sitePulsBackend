@@ -13,6 +13,8 @@ model User {
   password       String
   name           String
   role           String   @default("supervisor") // "supervisor" | "manager"
+  isAdmin        Boolean  @default(false) // app-level administrator (manages users)
+  tier           Int      @default(0)     // 0 = free/limited; >0 = paying tier (gates access later)
   companyName    String?
   companyLogoUrl        String?  // branded client portal header (E3)
   companyLogoCloudinaryId String?

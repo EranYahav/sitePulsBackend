@@ -39,11 +39,11 @@ router.post("/register", async (req: Request, res: Response) => {
   const hashed = await bcrypt.hash(password, 12);
   const user = await prisma.user.create({ data: { email, password: hashed, name, role } });
 
-  const accessToken = signAccessToken({ sub: user.id, email: user.email, role: user.role });
+  const accessToken = signAccessToken({ sub: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin });
   const { token: refreshToken, expiresAt } = generateRefreshToken();
   await prisma.refreshToken.create({ data: { userId: user.id, token: refreshToken, expiresAt } });
 
-  res.status(201).json({ accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  res.status(201).json({ accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.name, role: user.role, isAdmin: user.isAdmin, tier: user.tier } });
 });
 
 router.post("/login", async (req: Request, res: Response) => {
@@ -60,11 +60,11 @@ router.post("/login", async (req: Request, res: Response) => {
     return;
   }
 
-  const accessToken = signAccessToken({ sub: user.id, email: user.email, role: user.role });
+  const accessToken = signAccessToken({ sub: user.id, email: user.email, role: user.role, isAdmin: user.isAdmin });
   const { token: refreshToken, expiresAt } = generateRefreshToken();
   await prisma.refreshToken.create({ data: { userId: user.id, token: refreshToken, expiresAt } });
 
-  res.json({ accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  res.json({ accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.name, role: user.role, isAdmin: user.isAdmin, tier: user.tier } });
 });
 
 router.post("/refresh", async (req: Request, res: Response) => {
@@ -81,7 +81,7 @@ router.post("/refresh", async (req: Request, res: Response) => {
   }
 
   await prisma.refreshToken.delete({ where: { id: stored.id } });
-  const accessToken = signAccessToken({ sub: stored.user.id, email: stored.user.email, role: stored.user.role });
+  const accessToken = signAccessToken({ sub: stored.user.id, email: stored.user.email, role: stored.user.role, isAdmin: stored.user.isAdmin });
   const { token: newRefreshToken, expiresAt } = generateRefreshToken();
   await prisma.refreshToken.create({ data: { userId: stored.user.id, token: newRefreshToken, expiresAt } });
 
@@ -91,9 +91,15 @@ router.post("/refresh", async (req: Request, res: Response) => {
 router.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.sub },
-    select: { id: true, email: true, name: true, role: true, companyName: true, companyLogoUrl: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
+    select: { id: true, email: true, name: true, role: true, isAdmin: true, tier: true, companyName: true, companyLogoUrl: true, mobileNumber: true, phoneNumber: true, whatsappNumber: true },
   });
-  res.json(user);
+  if (!user) {
+    res.status(404).json({ code: "USER_NOT_FOUND", message: "User no longer exists", hint: "" });
+    return;
+  }
+  // impersonatedBy lives only on the token (not the DB row); surface it so the
+  // frontend can show the "viewing as" banner and offer "return to admin".
+  res.json({ ...user, impersonatedBy: req.user!.impersonatedBy ?? null });
 });
 
 const profileSchema = z.object({

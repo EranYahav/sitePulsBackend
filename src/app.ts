@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { requestId } from "./middleware/requestId";
 import authRouter from "./routes/auth";
+import adminRouter from "./routes/admin";
 import projectsRouter from "./routes/projects";
 import reportsRouter, { getReport } from "./routes/reports";
 import defectsRouter from "./routes/defects";
@@ -34,6 +35,7 @@ app.get("/api/v1/health", (_req, res) => {
 app.use("/api/v1/portal", portalRouter);
 
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/admin", adminRouter);
 app.use("/api/v1/project-types", projectTypesRouter);
 app.use("/api/v1/defect-domains", defectDomainsRouter);
 app.use("/api/v1/projects", projectsRouter);

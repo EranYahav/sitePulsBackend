@@ -11,10 +11,22 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  isAdmin?: boolean;
+  /**
+   * Set only on impersonation tokens: the email of the admin currently acting
+   * as this user. Its presence is how the app knows a session is impersonated
+   * (drives the banner + "return to admin"). Normal logins never carry it.
+   */
+  impersonatedBy?: string;
 }
 
-export function signAccessToken(payload: JwtPayload): string {
-  return jwt.sign(payload, SECRET, { expiresIn: EXPIRES_IN } as jwt.SignOptions);
+export function signAccessToken(
+  payload: JwtPayload,
+  opts?: { expiresIn?: string },
+): string {
+  return jwt.sign(payload, SECRET, {
+    expiresIn: opts?.expiresIn ?? EXPIRES_IN,
+  } as jwt.SignOptions);
 }
 
 export function verifyAccessToken(token: string): JwtPayload {
